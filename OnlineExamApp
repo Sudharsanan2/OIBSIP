@@ -1,0 +1,601 @@
+import java.awt.*;
+import java.util.*;
+import java.util.List;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+
+
+public class OnlineExamApp extends JFrame {
+
+    // ---- Models ----
+    static class User {
+        private final String username;
+        private String password; // For demo purposes only (plain). Hash in real apps.
+        private String fullName;
+        private String email;
+
+        User(String username, String password, String fullName, String email) {
+            this.username = username;
+            this.password = password;
+            this.fullName = fullName;
+            this.email = email;
+        }
+        public String getUsername() { return username; }
+        public String getPassword() { return password; }
+        public void setPassword(String password) { this.password = password; }
+        public String getFullName() { return fullName; }
+        public void setFullName(String fullName) { this.fullName = fullName; }
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email; }
+    }
+
+    static class Question {
+        final String text;
+        final String[] options; // 4 options
+        final int correctIndex; // 0..3
+
+        Question(String text, String[] options, int correctIndex) {
+            this.text = text;
+            this.options = options;
+            this.correctIndex = correctIndex;
+        }
+    }
+
+    static class ExamSession {
+        final User user;
+        final List<Question> questions;
+        final int[] answers; // -1 = not answered, otherwise 0..3
+        final long durationMillis;
+        final long startedAt; // epoch millis
+        boolean submitted = false;
+        int score = 0;
+
+        ExamSession(User user, List<Question> questions, int durationSeconds) {
+            this.user = user;
+            this.questions = questions;
+            this.answers = new int[questions.size()];
+            Arrays.fill(this.answers, -1);
+            this.durationMillis = durationSeconds * 1000L;
+            this.startedAt = System.currentTimeMillis();
+        }
+
+        long millisRemaining() {
+            long elapsed = System.currentTimeMillis() - startedAt;
+            long left = durationMillis - elapsed;
+            return Math.max(0, left);
+        }
+
+        boolean isTimeUp() {
+            return millisRemaining() <= 0;
+        }
+
+        void selectAnswer(int qIndex, int ansIndex) {
+            if (submitted) return;
+            if (qIndex >= 0 && qIndex < answers.length && ansIndex >= -1 && ansIndex < 4) {
+                answers[qIndex] = ansIndex;
+            }
+        }
+
+        void submit() {
+            if (submitted) return;
+            submitted = true;
+            // Calculate score
+            int s = 0;
+            for (int i = 0; i < questions.size(); i++) {
+                if (answers[i] == questions.get(i).correctIndex) s++;
+            }
+            score = s;
+        }
+    }
+
+    // ---- Services (in-memory) ----
+    static class UserStore {
+        private final Map<String, User> users = new HashMap<>();
+        UserStore() {
+            // Seed one test user
+            users.put("student", new User("student", "pass123", "Student One", "student@example.com"));
+        }
+        User find(String username) {
+            return users.get(username.toLowerCase(Locale.ROOT));
+        }
+        void save(User user) {
+            users.put(user.getUsername().toLowerCase(Locale.ROOT), user);
+        }
+    }
+
+    static class AuthService {
+        private final UserStore store;
+        private User current;
+
+        AuthService(UserStore store) {
+            this.store = store;
+        }
+        boolean login(String username, String password) {
+            User u = store.find(username);
+            if (u != null && Objects.equals(u.getPassword(), password)) {
+                current = u;
+                return true;
+            }
+            return false;
+        }
+        void logout() {
+            current = null;
+        }
+        User currentUser() { return current; }
+        boolean isLoggedIn() { return current != null; }
+        void updateProfile(String fullName, String email) {
+            if (current != null) {
+                current.setFullName(fullName);
+                current.setEmail(email);
+                store.save(current);
+            }
+        }
+        boolean changePassword(String oldPwd, String newPwd) {
+            if (current == null) return false;
+            if (!Objects.equals(current.getPassword(), oldPwd)) return false;
+            current.setPassword(newPwd);
+            store.save(current);
+            return true;
+        }
+    }
+
+    static class QuestionBank {
+        static List<Question> sample() {
+            List<Question> qs = new ArrayList<>();
+            qs.add(new Question(
+                "Which Java keyword is used to inherit a class?",
+                new String[]{"implement", "extends", "inherits", "instanceof"}, 1));
+            qs.add(new Question(
+                "What does JVM stand for?",
+                new String[]{"Java Veryfast Machine", "Java Virtual Machine", "Just Virtual Module", "Jumbo Virtual Machine"}, 1));
+            qs.add(new Question(
+                "Which collection does NOT allow duplicates?",
+                new String[]{"List", "Queue", "Set", "Map"}, 2));
+            qs.add(new Question(
+                "Which is NOT a Java access modifier?",
+                new String[]{"public", "internal", "protected", "private"}, 1));
+            qs.add(new Question(
+                "Which package is imported by default in every Java program?",
+                new String[]{"java.util", "java.io", "java.lang", "java.net"}, 2));
+            return qs;
+        }
+    }
+
+    // ---- UI: Screens with CardLayout ----
+    private final CardLayout cards = new CardLayout();
+    private final JPanel root = new JPanel(cards);
+
+    // Shared services/state
+    private final UserStore userStore = new UserStore();
+    private final AuthService auth = new AuthService(userStore);
+
+    // Screens
+    private final LoginPanel loginPanel = new LoginPanel();
+    private final DashboardPanel dashboardPanel = new DashboardPanel();
+    private final ProfilePanel profilePanel = new ProfilePanel();
+    private final PasswordPanel passwordPanel = new PasswordPanel();
+    private final ExamPanel examPanel = new ExamPanel();
+
+    public OnlineExamApp() {
+        super("Online Examination");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setMinimumSize(new Dimension(900, 600));
+        setLocationRelativeTo(null);
+
+        root.add(loginPanel, "login");
+        root.add(dashboardPanel, "dashboard");
+        root.add(profilePanel, "profile");
+        root.add(passwordPanel, "password");
+        root.add(examPanel, "exam");
+
+        setContentPane(root);
+        showLogin();
+    }
+
+    private void showLogin()   { cards.show(root, "login"); }
+    private void showDash()    { cards.show(root, "dashboard"); }
+    private void showProfile() { profilePanel.load(); cards.show(root, "profile"); }
+    private void showPassword(){ cards.show(root, "password"); }
+    private void showExam()    { examPanel.startNewExam(); cards.show(root, "exam"); }
+
+    // ---- Panels ----
+
+    // Utility UI helpers
+    static JPanel vstack(int gap, JComponent... comps) {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBorder(new EmptyBorder(16, 16, 16, 16));
+        for (JComponent c : comps) {
+            c.setAlignmentX(Component.LEFT_ALIGNMENT);
+            p.add(c);
+            p.add(Box.createRigidArea(new Dimension(1, gap)));
+        }
+        return p;
+    }
+    static JPanel hstack(int gap, JComponent... comps) {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.X_AXIS));
+        for (int i = 0; i < comps.length; i++) {
+            p.add(comps[i]);
+            if (i < comps.length - 1) p.add(Box.createRigidArea(new Dimension(gap, 1)));
+        }
+        return p;
+    }
+    static JButton button(String text, Runnable action) {
+        JButton b = new JButton(text);
+        b.addActionListener(e -> action.run());
+        return b;
+    }
+
+    class LoginPanel extends JPanel {
+        private final JTextField username = new JTextField(20);
+        private final JPasswordField password = new JPasswordField(20);
+        private final JLabel status = new JLabel(" ");
+
+        LoginPanel() {
+            setLayout(new BorderLayout());
+            JLabel title = new JLabel("Online Examination - Login");
+            title.setFont(title.getFont().deriveFont(Font.BOLD, 20f));
+
+            JPanel form = vstack(10,
+                new JLabel("Username"),
+                username,
+                new JLabel("Password"),
+                password,
+                hstack(10,
+                    button("Login", this::onLogin),
+                    button("Exit", () -> System.exit(0))
+                ),
+                status
+            );
+
+            add(vstack(10, title, form), BorderLayout.CENTER);
+
+            // Enter to login
+            password.addActionListener(e -> onLogin());
+        }
+
+        void onLogin() {
+            String u = username.getText().trim();
+            String p = new String(password.getPassword());
+            if (u.isEmpty() || p.isEmpty()) {
+                status.setText("Please enter username and password.");
+                status.setForeground(Color.RED);
+                return;
+            }
+            if (auth.login(u, p)) {
+                status.setText(" ");
+                username.setText("");
+                password.setText("");
+                showDash();
+            } else {
+                status.setText("Invalid credentials.");
+                status.setForeground(Color.RED);
+            }
+        }
+    }
+
+    class DashboardPanel extends JPanel {
+        private final JLabel welcome = new JLabel("Welcome!");
+
+        DashboardPanel() {
+            setLayout(new BorderLayout());
+            welcome.setFont(welcome.getFont().deriveFont(Font.BOLD, 18f));
+
+            JPanel buttons = vstack(8,
+                button("Start Exam (5 questions, 2 minutes)", () -> showExam()),
+                button("Update Profile", () -> showProfile()),
+                button("Change Password", () -> showPassword()),
+                button("Logout", () -> {
+                    int c = JOptionPane.showConfirmDialog(this, "Logout and close session?", "Confirm Logout",
+                            JOptionPane.YES_NO_OPTION);
+                    if (c == JOptionPane.YES_OPTION) {
+                        auth.logout();
+                        showLogin();
+                    }
+                })
+            );
+
+            add(vstack(10, welcome, buttons), BorderLayout.CENTER);
+        }
+
+        @Override
+        public void setVisible(boolean aFlag) {
+            super.setVisible(aFlag);
+            if (aFlag && auth.isLoggedIn()) {
+                User u = auth.currentUser();
+                welcome.setText("Welcome, " + u.getFullName() + " (" + u.getUsername() + ")");
+            }
+        }
+    }
+
+    class ProfilePanel extends JPanel {
+        private final JTextField name = new JTextField(24);
+        private final JTextField email = new JTextField(24);
+
+        ProfilePanel() {
+            setLayout(new BorderLayout());
+            JLabel title = new JLabel("Update Profile");
+            title.setFont(title.getFont().deriveFont(Font.BOLD, 18f));
+
+            JPanel form = vstack(10,
+                new JLabel("Full Name"),
+                name,
+                new JLabel("Email"),
+                email,
+                hstack(10,
+                    button("Save", this::onSave),
+                    button("Back", () -> showDash())
+                )
+            );
+
+            add(vstack(10, title, form), BorderLayout.CENTER);
+        }
+
+        void load() {
+            User u = auth.currentUser();
+            if (u != null) {
+                name.setText(u.getFullName());
+                email.setText(u.getEmail());
+            }
+        }
+
+        void onSave() {
+            String n = name.getText().trim();
+            String e = email.getText().trim();
+            if (n.isEmpty() || e.isEmpty() || !e.contains("@")) {
+                JOptionPane.showMessageDialog(this, "Enter a valid name and email.", "Validation",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            auth.updateProfile(n, e);
+            JOptionPane.showMessageDialog(this, "Profile updated.", "Success",
+                    JOptionPane.INFORMATION_MESSAGE);
+            showDash();
+        }
+    }
+
+    class PasswordPanel extends JPanel {
+        private final JPasswordField oldPwd = new JPasswordField(20);
+        private final JPasswordField newPwd = new JPasswordField(20);
+        private final JPasswordField confirmPwd = new JPasswordField(20);
+
+        PasswordPanel() {
+            setLayout(new BorderLayout());
+            JLabel title = new JLabel("Change Password");
+            title.setFont(title.getFont().deriveFont(Font.BOLD, 18f));
+
+            JPanel form = vstack(10,
+                new JLabel("Old Password"),
+                oldPwd,
+                new JLabel("New Password (min 6 chars)"),
+                newPwd,
+                new JLabel("Confirm New Password"),
+                confirmPwd,
+                hstack(10,
+                    button("Change", this::onChange),
+                    button("Back", () -> showDash())
+                )
+            );
+
+            add(vstack(10, title, form), BorderLayout.CENTER);
+        }
+
+        void onChange() {
+            String oldP = new String(oldPwd.getPassword());
+            String newP = new String(newPwd.getPassword());
+            String conP = new String(confirmPwd.getPassword());
+
+            if (newP.length() < 6) {
+                JOptionPane.showMessageDialog(this, "New password must be at least 6 characters.",
+                        "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (!newP.equals(conP)) {
+                JOptionPane.showMessageDialog(this, "New password and confirm password must match.",
+                        "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (auth.changePassword(oldP, newP)) {
+                JOptionPane.showMessageDialog(this, "Password changed successfully.",
+                        "Success", JOptionPane.INFORMATION_MESSAGE);
+                oldPwd.setText(""); newPwd.setText(""); confirmPwd.setText("");
+                showDash();
+            } else {
+                JOptionPane.showMessageDialog(this, "Old password is incorrect.",
+                        "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    class ExamPanel extends JPanel {
+        private ExamSession session;
+        private javax.swing.Timer swingTimer;
+
+        // UI controls
+        private final JLabel header = new JLabel("Exam In Progress");
+        private final JLabel timerLabel = new JLabel("Time: 00:00");
+        private final JLabel qCounter = new JLabel("Question 1/5");
+        private final JTextArea questionText = new JTextArea(4, 60);
+        private final JRadioButton[] optionBtns = new JRadioButton[4];
+        private final ButtonGroup optionGroup = new ButtonGroup();
+        private final JButton prevBtn = new JButton("Previous");
+        private final JButton nextBtn = new JButton("Next");
+        private final JButton submitBtn = new JButton("Submit");
+        private final JButton cancelBtn = new JButton("Cancel & Exit");
+
+        private int currentIndex = 0;
+
+        ExamPanel() {
+            setLayout(new BorderLayout());
+            header.setFont(header.getFont().deriveFont(Font.BOLD, 18f));
+            timerLabel.setFont(timerLabel.getFont().deriveFont(Font.BOLD, 16f));
+
+            questionText.setLineWrap(true);
+            questionText.setWrapStyleWord(true);
+            questionText.setEditable(false);
+            questionText.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 16));
+
+            JPanel topBar = new JPanel(new BorderLayout());
+            topBar.setBorder(new EmptyBorder(10, 10, 10, 10));
+            topBar.add(header, BorderLayout.WEST);
+            JPanel right = hstack(10, qCounter, timerLabel);
+            topBar.add(right, BorderLayout.EAST);
+
+            JPanel optionsPanel = new JPanel();
+            optionsPanel.setLayout(new BoxLayout(optionsPanel, BoxLayout.Y_AXIS));
+            for (int i = 0; i < 4; i++) {
+                optionBtns[i] = new JRadioButton("Option " + (i+1));
+                optionBtns[i].setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 15));
+                optionGroup.add(optionBtns[i]);
+                optionsPanel.add(optionBtns[i]);
+            }
+
+            JPanel center = vstack(10, new JScrollPane(questionText), optionsPanel);
+
+            JPanel bottom = hstack(10,
+                prevBtn, nextBtn,
+                submitBtn, cancelBtn
+            );
+            JPanel bottomWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            bottomWrap.add(bottom);
+
+            add(topBar, BorderLayout.NORTH);
+            add(center, BorderLayout.CENTER);
+            add(bottomWrap, BorderLayout.SOUTH);
+
+            prevBtn.addActionListener(e -> showQuestion(currentIndex - 1));
+            nextBtn.addActionListener(e -> showQuestion(currentIndex + 1));
+            submitBtn.addActionListener(e -> doSubmit(false));
+            cancelBtn.addActionListener(e -> {
+                int c = JOptionPane.showConfirmDialog(this,
+                        "Cancel exam and return to dashboard? Answers will be discarded.",
+                        "Confirm Cancel", JOptionPane.YES_NO_OPTION);
+                if (c == JOptionPane.YES_OPTION) {
+                    stopTimerIfAny();
+                    session = null;
+                    showDash();
+                }
+            });
+
+            // Save selected answer when changing selection
+            for (int i = 0; i < 4; i++) {
+                final int idx = i;
+                optionBtns[i].addActionListener(e -> {
+                    if (session != null) session.selectAnswer(currentIndex, idx);
+                });
+            }
+        }
+
+        void startNewExam() {
+            // 2 minutes for demo (120 seconds). Adjust as needed.
+            session = new ExamSession(auth.currentUser(), QuestionBank.sample(), 120);
+            currentIndex = 0;
+            // Start countdown timer that ticks every 0.5s and auto-submits on expiry
+            stopTimerIfAny();
+            swingTimer = new javax.swing.Timer(500, e -> onTick());
+            swingTimer.start();
+            showQuestion(0);
+        }
+
+        void onTick() {
+            if (session == null) return;
+            long millis = session.millisRemaining();
+            long sec = millis / 1000;
+            long mm = sec / 60;
+            long ss = sec % 60;
+            timerLabel.setText(String.format("Time: %02d:%02d", mm, ss));
+
+            if (millis <= 0) {
+                doSubmit(true); // auto submit
+            }
+        }
+
+        void stopTimerIfAny() {
+            if (swingTimer != null) {
+                swingTimer.stop();
+                swingTimer = null;
+            }
+        }
+
+        void showQuestion(int index) {
+            if (session == null) return;
+            index = Math.max(0, Math.min(index, session.questions.size() - 1));
+            currentIndex = index;
+
+            Question q = session.questions.get(index);
+            questionText.setText(q.text);
+            for (int i = 0; i < 4; i++) {
+                optionBtns[i].setText((char)('A' + i) + ". " + q.options[i]);
+            }
+
+            // restore selection
+            optionGroup.clearSelection();
+            int saved = session.answers[index];
+            if (saved >= 0 && saved < 4) {
+                optionBtns[saved].setSelected(true);
+            }
+
+            qCounter.setText("Question " + (index + 1) + "/" + session.questions.size());
+            prevBtn.setEnabled(index > 0);
+            nextBtn.setEnabled(index < session.questions.size() - 1);
+        }
+
+        void doSubmit(boolean auto) {
+            if (session == null) return;
+            stopTimerIfAny();
+            session.submit();
+
+            String title = auto ? "Time Up — Auto Submitted" : "Submit Exam";
+            String msg = String.format(
+                "%s\n\nScore: %d / %d\n\nDo you want to view a brief review?",
+                auto ? "Your time is over. The exam was auto-submitted." : "Your exam has been submitted.",
+                session.score, session.questions.size()
+            );
+            int c = JOptionPane.showConfirmDialog(this, msg, title, JOptionPane.YES_NO_OPTION);
+
+            if (c == JOptionPane.YES_OPTION) {
+                showReviewDialog(session);
+            }
+            session = null; // invalidate session for safety
+            showDash();
+        }
+
+        void showReviewDialog(ExamSession s) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Answer Review:\n\n");
+            for (int i = 0; i < s.questions.size(); i++) {
+                Question q = s.questions.get(i);
+                int chosen = s.answers[i];
+                sb.append("Q").append(i + 1).append(". ").append(q.text).append("\n");
+                for (int k = 0; k < 4; k++) {
+                    boolean isCorrect = (k == q.correctIndex);
+                    boolean isChosen = (k == chosen);
+                    sb.append("  ").append((char)('A' + k)).append(") ").append(q.options[k]);
+                    if (isCorrect) sb.append("  [Correct]");
+                    if (isChosen && !isCorrect) sb.append("  [Your choice]");
+                    if (isChosen && isCorrect) sb.append("  [You chose correctly]");
+                    sb.append("\n");
+                }
+                sb.append("\n");
+            }
+            JTextArea area = new JTextArea(sb.toString(), 20, 60);
+            area.setEditable(false);
+            area.setLineWrap(true);
+            area.setWrapStyleWord(true);
+            JScrollPane sp = new JScrollPane(area);
+            JOptionPane.showMessageDialog(this, sp, "Review", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+    // ---- main ----
+    public static void main(String[] args) {
+        // Windows HiDPI tweak for crisp UI
+        System.setProperty("sun.java2d.uiScale", "1.0");
+
+        SwingUtilities.invokeLater(() -> {
+            OnlineExamApp app = new OnlineExamApp();
+            app.setVisible(true);
+        });
+    }
+}
