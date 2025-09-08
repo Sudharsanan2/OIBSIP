@@ -1,0 +1,207 @@
+import java.util.*;
+
+public class Main {
+    
+    static class Book {
+        int id;
+        String title;
+        String author;
+        boolean issued;
+
+        Book(int id, String title, String author) {
+            this.id = id;
+            this.title = title;
+            this.author = author;
+            this.issued = false;
+        }
+    }
+
+    static class User {
+        int id;
+        String name;
+
+        User(int id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+    }
+
+    static class Admin {
+        List<Book> books;
+        List<User> users;
+
+        Admin(List<Book> books, List<User> users) {
+            this.books = books;
+            this.users = users;
+        }
+
+        void addBook(int id, String title, String author) {
+            books.add(new Book(id, title, author));
+            System.out.println("Book added successfully!");
+        }
+
+        void viewBooks() {
+            if (books.isEmpty()) {
+                System.out.println("No books available.");
+                return;
+            }
+            for (Book b : books) {
+                System.out.println(b.id + ". " + b.title + " by " + b.author + (b.issued ? " (Issued)" : ""));
+            }
+        }
+
+        void addUser(int id, String name) {
+            users.add(new User(id, name));
+            System.out.println("User added successfully!");
+        }
+
+        void viewUsers() {
+            if (users.isEmpty()) {
+                System.out.println("No users available.");
+                return;
+            }
+            for (User u : users) {
+                System.out.println(u.id + ". " + u.name);
+            }
+        }
+    }
+
+    static class LibraryUser {
+        List<Book> books;
+
+        LibraryUser(List<Book> books) {
+            this.books = books;
+        }
+
+        void browseBooks() {
+            if (books.isEmpty()) {
+                System.out.println("No books available.");
+                return;
+            }
+            for (Book b : books) {
+                System.out.println(b.id + ". " + b.title + " by " + b.author + (b.issued ? " (Issued)" : ""));
+            }
+        }
+
+        void issueBook(int id) {
+            for (Book b : books) {
+                if (b.id == id) {
+                    if (!b.issued) {
+                        b.issued = true;
+                        System.out.println("Book issued successfully!");
+                    } else {
+                        System.out.println("Sorry, the book is already issued.");
+                    }
+                    return;
+                }
+            }
+            System.out.println("Book not found.");
+        }
+
+        void returnBook(int id) {
+            for (Book b : books) {
+                if (b.id == id) {
+                    if (b.issued) {
+                        b.issued = false;
+                        System.out.println("Book returned successfully!");
+                    } else {
+                        System.out.println("This book was not issued.");
+                    }
+                    return;
+                }
+            }
+            System.out.println("Book not found.");
+        }
+    }
+
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+
+        List<Book> books = new ArrayList<>();
+        List<User> users = new ArrayList<>();
+
+        Admin admin = new Admin(books, users);
+        LibraryUser libUser = new LibraryUser(books);
+
+        while (true) {
+            System.out.println("\n--- Digital Library Management ---");
+            System.out.println("1. Admin Login");
+            System.out.println("2. User Access");
+            System.out.println("3. Exit");
+            System.out.print("Enter choice: ");
+            int choice = sc.nextInt();
+
+            if (choice == 1) {
+                while (true) {
+                    System.out.println("\n--- Admin Menu ---");
+                    System.out.println("1. Add Book");
+                    System.out.println("2. View Books");
+                    System.out.println("3. Add User");
+                    System.out.println("4. View Users");
+                    System.out.println("5. Back");
+                    System.out.print("Enter choice: ");
+                    int ch = sc.nextInt();
+
+                    if (ch == 1) {
+                        System.out.print("Enter Book ID: ");
+                        int id = sc.nextInt();
+                        sc.nextLine();
+                        System.out.print("Enter Book Title: ");
+                        String title = sc.nextLine();
+                        System.out.print("Enter Author: ");
+                        String author = sc.nextLine();
+                        admin.addBook(id, title, author);
+                    } else if (ch == 2) {
+                        admin.viewBooks();
+                    } else if (ch == 3) {
+                        System.out.print("Enter User ID: ");
+                        int id = sc.nextInt();
+                        sc.nextLine();
+                        System.out.print("Enter User Name: ");
+                        String name = sc.nextLine();
+                        admin.addUser(id, name);
+                    } else if (ch == 4) {
+                        admin.viewUsers();
+                    } else if (ch == 5) {
+                        break;
+                    } else {
+                        System.out.println("Invalid choice.");
+                    }
+                }
+            } else if (choice == 2) {
+                while (true) {
+                    System.out.println("\n--- User Menu ---");
+                    System.out.println("1. Browse Books");
+                    System.out.println("2. Issue Book");
+                    System.out.println("3. Return Book");
+                    System.out.println("4. Back");
+                    System.out.print("Enter choice: ");
+                    int ch = sc.nextInt();
+
+                    if (ch == 1) {
+                        libUser.browseBooks();
+                    } else if (ch == 2) {
+                        System.out.print("Enter Book ID to issue: ");
+                        int id = sc.nextInt();
+                        libUser.issueBook(id);
+                    } else if (ch == 3) {
+                        System.out.print("Enter Book ID to return: ");
+                        int id = sc.nextInt();
+                        libUser.returnBook(id);
+                    } else if (ch == 4) {
+                        break;
+                    } else {
+                        System.out.println("Invalid choice.");
+                    }
+                }
+            } else if (choice == 3) {
+                System.out.println("Exiting system... Goodbye!");
+                break;
+            } else {
+                System.out.println("Invalid choice.");
+            }
+        }
+
+        sc.close();
+    }
+}
